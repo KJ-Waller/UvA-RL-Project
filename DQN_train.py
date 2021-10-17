@@ -152,7 +152,7 @@ def train_dqn(env_name, num_eps=10000, batch_size=64, hidden_dim=128, lr=1e-3,
             
             if done:
                 if i % 10 == 0:
-                    print(f'Episode {i} finished after {steps} steps with cumulative return {G}')
+                    print(f'Episode {i} finished after {steps} steps with return {G}')
 
                 episode_durations.append(steps)
                 returns.append(G)
