@@ -54,6 +54,7 @@ def get_env(env_name, zeta=0.05):
             grid_size = [int(grid_size[0][0]), int(grid_size[0][1])]
 
         env = GridworldEnv(shape=grid_size)
+        env._max_episode_steps = 500
         state_dim, action_dim = 1, env.action_space.n
 
     elif 'stochastic' in env_name.lower():
