@@ -20,7 +20,7 @@ class QNetwork(nn.Module):
 
     def forward(self, state):
         # Simply pass (obs/state) through the network
-        actions = F.softmax(self.l2(F.relu(self.l1(state))))
+        actions = self.l2(self.l1(state))
         
         return actions
 
