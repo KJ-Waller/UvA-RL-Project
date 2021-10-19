@@ -43,6 +43,7 @@ def save_frames(frames, directory, fname):
 def get_env(env_name, zeta=0.05):
     if 'windy' in env_name.lower():
         env = gym.make('WindyGridWorld-v0')
+        env._max_episode_steps = 500
         state_dim, action_dim = 2, env.action_space.n
 
     elif 'gridworld' in env_name.lower():
