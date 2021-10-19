@@ -87,7 +87,7 @@ def ddql_train_step(Q1, Q2, memory, optimizer, batch_size, discount_factor, devi
     
     return loss.item()  # Returns a Python scalar, and releases history (similar to .detach())
         
-def train_ddqn(env_name, num_eps=10000, batch_size=64, hidden_dim=128, lr=1e-3, 
+def train_ddqn(env_name, num_eps=10000, batch_size=64, hidden_dims=[128], lr=1e-3, 
                 gamma=0.8, eps_start=1.0, eps_end=0.05, eps_decay_iters=1000,
                 zeta=0.05, mem_cap=10000, seed=42, render=False):
 
@@ -98,8 +98,8 @@ def train_ddqn(env_name, num_eps=10000, batch_size=64, hidden_dim=128, lr=1e-3,
     memory = ReplayMemory(mem_cap)
     set_seed(seed, env)
 
-    Q1 = QNetwork(state_dim, action_dim, hidden_dim).to(device)
-    Q2 = QNetwork(state_dim, action_dim, hidden_dim).to(device)
+    Q1 = QNetwork(state_dim, action_dim, hidden_dims).to(device)
+    Q2 = QNetwork(state_dim, action_dim, hidden_dims).to(device)
     policy = DDQL_policy(Q1, Q2, eps_start, device)
     
     optimizer_Q1 = torch.optim.Adam(Q1.parameters(), lr)
@@ -119,6 +119,11 @@ def train_ddqn(env_name, num_eps=10000, batch_size=64, hidden_dim=128, lr=1e-3,
         
         steps = 0
         G = 0
+
+        if i == (num_eps-1) and 'lunar' in env_name.lower():
+            frames = []
+            render = False
+
         while True:
             # Sample action from policy
             action = policy.sample_action(state)
@@ -134,6 +139,9 @@ def train_ddqn(env_name, num_eps=10000, batch_size=64, hidden_dim=128, lr=1e-3,
                 env.render()
                 time.sleep(0.1)
 
+            if i == (num_eps-1) and 'lunar' in env_name.lower():
+                frame = env.render('rgb_array')
+                frames.append(frame)
             
             # Push transition to memory
             memory.push((state, action, reward, state_, done))
@@ -157,8 +165,11 @@ def train_ddqn(env_name, num_eps=10000, batch_size=64, hidden_dim=128, lr=1e-3,
 
                 episode_durations.append(steps)
                 returns.append(G)
-                #plot_durations()
                 break
+
+        if i == (num_eps-1) and 'lunar' in env_name.lower():
+            save_frames(frames, './results', f'{env_name}_ddqn_s{seed}_episode')
+            env.close()
 
         if render:
             env.close()
@@ -169,4 +180,4 @@ def train_ddqn(env_name, num_eps=10000, batch_size=64, hidden_dim=128, lr=1e-3,
 
     return episode_durations, returns
 
-# train_ddqn('Windy-Gridworld', render=False)
+# train_ddqn('LunarLander-v2', render=False, num_eps=10)

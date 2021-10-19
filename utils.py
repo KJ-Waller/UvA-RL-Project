@@ -1,3 +1,4 @@
+import os
 import random
 import torch
 import gym
@@ -5,6 +6,7 @@ import gym_windy_gridworlds
 from gridworld import GridworldEnv
 import re
 import numpy as np
+from PIL import Image
 
 class RandomActionWrapper(gym.ActionWrapper):
     """
@@ -27,6 +29,15 @@ def set_seed(seed, env):
     random.seed(seed)
     torch.manual_seed(seed)
     env.seed(seed)
+
+def save_frames(frames, directory, fname):
+    pil_frames = [Image.fromarray(frame, mode='RGB') for frame in frames]
+    if not os.path.exists(directory):
+        os.mkdir(directory)
+
+    pil_frames[0].save(os.path.join(directory, f'{fname}.gif'), format='GIF', 
+                        append_images=pil_frames[1:], save_all=True, duration=30, loop=0)
+
 
 # Helper function which initializes environments
 def get_env(env_name, zeta=0.05):
