@@ -89,15 +89,11 @@ def dql_train_step(Q, memory, optimizer, batch_size, discount_factor, device):
 
 def train_dqn(env_name, num_eps=10000, batch_size=64, hidden_dim=128, lr=1e-3, 
                 gamma=0.8, eps_start=1.0, eps_end=0.05, eps_decay_iters=1000,
-                mem_cap=10000, seed=42, render=False):
+                zeta=0.05, mem_cap=10000, seed=42, render=False):
+                
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    if 'gridworld' in env_name.lower():
-        env = GridworldEnv(shape=[16,16])
-        state_dim, action_dim = 1, env.action_space.n
-    else:
-        env = gym.envs.make(env_name)
-        state_dim, action_dim = env.observation_space.shape[0], env.action_space.n
+    env, state_dim, action_dim = get_env(env_name, zeta=zeta)
     
     memory = ReplayMemory(mem_cap)
     set_seed(seed, env)

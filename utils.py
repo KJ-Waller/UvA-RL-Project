@@ -1,16 +1,40 @@
 import random
 import torch
 import gym
+import gym_windy_gridworlds
 from gridworld import GridworldEnv
 import re
+import numpy as np
 
+class RandomActionWrapper(gym.ActionWrapper):
+    """
+    Environment wrapper which adds random actions
+        zeta: probability of taking a random action instead of the action picked by the agent
+    """
+    def __init__(self, env, zeta):
+        super().__init__(env)
+        self.zeta = zeta
+
+    def action(self, action):
+        if random.random() < self.zeta:
+            actions = np.arange(self.action_space.n)
+            action = random.choice(actions)
+
+        return action
+
+# Simple helper function which sets the seed for reproducibility
 def set_seed(seed, env):
     random.seed(seed)
     torch.manual_seed(seed)
     env.seed(seed)
 
-def get_env(env_name):
-    if 'gridworld' in env_name.lower():
+# Helper function which initializes environments
+def get_env(env_name, zeta=0.05):
+    if 'windy' in env_name.lower():
+        env = gym.make('WindyGridWorld-v0')
+        state_dim, action_dim = 2, env.action_space.n
+
+    elif 'gridworld' in env_name.lower():
         grid_size = re.findall(r'([0-9]+)x([0-9]+)', env_name)
         if grid_size is None:
             gird_size = [16,16]
@@ -19,12 +43,19 @@ def get_env(env_name):
 
         env = GridworldEnv(shape=grid_size)
         state_dim, action_dim = 1, env.action_space.n
+
+    elif 'stochastic' in env_name.lower():
+        env_name, _ = env_name.rsplit('-', 1)
+        env = RandomActionWrapper(gym.envs.make(env_name), zeta)
+        state_dim, action_dim = env.observation_space.shape[0], env.action_space.n
     else:
         env = gym.envs.make(env_name)
         state_dim, action_dim = env.observation_space.shape[0], env.action_space.n
 
+
     return env, state_dim, action_dim
 
+# Function which decays epsilon over time
 def get_epsilon(it, eps_start=1.0, eps_end=0.05, decay_iters=1000):
     epsilon = eps_start - (it*((eps_start-eps_end)/decay_iters)) if it < decay_iters else eps_end
     return epsilon
@@ -74,12 +105,10 @@ def compute_targets(Q, rewards, next_states, dones, discount_factor):
     return targets
 
 class ReplayMemory:
-    
     def __init__(self, capacity):
         self.capacity = capacity
         self.memory = []
         
-        # Added a pointer here 
         self.pointer = 0
 
     def push(self, transition):

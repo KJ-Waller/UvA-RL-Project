@@ -89,11 +89,11 @@ def ddql_train_step(Q1, Q2, memory, optimizer, batch_size, discount_factor, devi
         
 def train_ddqn(env_name, num_eps=10000, batch_size=64, hidden_dim=128, lr=1e-3, 
                 gamma=0.8, eps_start=1.0, eps_end=0.05, eps_decay_iters=1000,
-                mem_cap=10000, seed=42, render=False):
+                zeta=0.05, mem_cap=10000, seed=42, render=False):
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    env, state_dim, action_dim = get_env(env_name)
+    env, state_dim, action_dim = get_env(env_name, zeta=zeta)
 
     memory = ReplayMemory(mem_cap)
     set_seed(seed, env)
@@ -165,8 +165,8 @@ def train_ddqn(env_name, num_eps=10000, batch_size=64, hidden_dim=128, lr=1e-3,
     
     end_time = time.time()
 
-    print(f'DDQN ran for {end_time-start_time} on {env_name}')
+    print(f'DDQN ran for {end_time-start_time} seconds on {env_name}')
 
     return episode_durations, returns
 
-# train_ddqn('GridWorld-16x16', render=False)
+# train_ddqn('Windy-Gridworld', render=False)
