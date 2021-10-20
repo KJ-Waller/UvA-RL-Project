@@ -50,7 +50,7 @@ class DQL_policy(object):
     def set_epsilon(self, epsilon):
         self.epsilon = epsilon
 
-def dql_train_step(Q, memory, optimizer, batch_size, discount_factor, device):
+def dql_train_step(Q_policy, Q_target, memory, optimizer, batch_size, discount_factor, device):
     # don't learn without some decent experience
     if len(memory) < batch_size:
         return None
@@ -73,9 +73,9 @@ def dql_train_step(Q, memory, optimizer, batch_size, discount_factor, device):
     done = torch.tensor(done, dtype=torch.uint8)[:, None].to(device)  # Boolean
     
     # compute the q value
-    q_val = compute_q_vals(Q, state, action)
+    q_val = compute_q_vals(Q_policy, state, action)
     with torch.no_grad():  # Don't compute gradient info for the target (semi-gradient)
-        target = compute_targets(Q, reward, next_state, done, discount_factor)
+        target = compute_targets(Q_target, reward, next_state, done, discount_factor)
     
     # loss is measured from error between current and newly expected Q values
     loss = F.smooth_l1_loss(q_val, target)
@@ -89,7 +89,8 @@ def dql_train_step(Q, memory, optimizer, batch_size, discount_factor, device):
 
 def train_dqn(env_name, num_eps=10000, batch_size=64, hidden_dims=[128], lr=1e-3, 
                 gamma=0.8, eps_start=1.0, eps_end=0.05, eps_decay_iters=1000,
-                zeta=0.05, mem_cap=10000, seed=42, render=False):
+                zeta=0.05, mem_cap=10000, seed=42, replace_target_cnt=1000, 
+                max_episode_length=500, render=False):
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -98,10 +99,11 @@ def train_dqn(env_name, num_eps=10000, batch_size=64, hidden_dims=[128], lr=1e-3
     memory = ReplayMemory(mem_cap)
     set_seed(seed, env)
 
-    Q = QNetwork(state_dim, action_dim, hidden_dims).to(device)
-    policy = DQL_policy(Q, eps_start, device)
+    Q_policy = QNetwork(state_dim, action_dim, hidden_dims).to(device)
+    Q_target = QNetwork(state_dim, action_dim, hidden_dims).to(device)
+    policy = DQL_policy(Q_policy, eps_start, device)
     
-    optimizer = torch.optim.Adam(Q.parameters(), lr)
+    optimizer = torch.optim.Adam(Q_policy.parameters(), lr)
     
     global_steps = 0  # Count the steps (do not reset at episode start, to compute epsilon)
     episode_durations = []  #
@@ -109,10 +111,6 @@ def train_dqn(env_name, num_eps=10000, batch_size=64, hidden_dims=[128], lr=1e-3
 
     start_time = time.time()
     for i in range(num_eps):
-        # First initialize the current epsilon value based on global step, and set it in current policy
-        curr_eps = get_epsilon(global_steps, eps_start, eps_end, eps_decay_iters)
-        policy.set_epsilon(curr_eps)
-
         state = env.reset()
         
         steps = 0
@@ -123,12 +121,20 @@ def train_dqn(env_name, num_eps=10000, batch_size=64, hidden_dims=[128], lr=1e-3
             render = False
 
         while True:
-            
+            # First initialize the current epsilon value based on global step, and set it in current policy
+            curr_eps = get_epsilon(global_steps, eps_start, eps_end, eps_decay_iters)
+            policy.set_epsilon(curr_eps)
+
             # Sample action from policy
             action = policy.sample_action(state)
             
             # Get next state and reward
             state_, reward, done, _ = env.step(action)
+
+            # Check if not going over maximum episode length
+            if steps >= (max_episode_length - 1) and 'lunar' not in env_name.lower():
+                reward = -1.0
+                done = True
 
             # Calulcate G for statistics
             G += (gamma**steps) * reward
@@ -146,7 +152,7 @@ def train_dqn(env_name, num_eps=10000, batch_size=64, hidden_dims=[128], lr=1e-3
             memory.push((state, action, reward, state_, done))
             
             # Train on a batch of transitions and optimize
-            dql_train_step(Q, memory, optimizer, batch_size, gamma, device)
+            dql_train_step(Q_policy, Q_target, memory, optimizer, batch_size, gamma, device)
             
             # Increment step counters
             global_steps += 1
@@ -154,6 +160,10 @@ def train_dqn(env_name, num_eps=10000, batch_size=64, hidden_dims=[128], lr=1e-3
             
             # Set current state to next state
             state = state_
+
+            # Replace target net
+            if global_steps % replace_target_cnt == 0:
+                Q_target.load_state_dict(Q_policy.state_dict())
             
             if done:
                 if i % 10 == 0:
@@ -174,6 +184,6 @@ def train_dqn(env_name, num_eps=10000, batch_size=64, hidden_dims=[128], lr=1e-3
 
     print(f'DQN ran for {end_time-start_time} seconds on {env_name}')
 
-    Q.save_model('./results/', f'{env_name}_dqn_s{seed}_Qmodel')
+    Q_policy.save_model('./results/', f'{env_name}_dqn_s{seed}_Qmodel')
 
     return episode_durations, returns

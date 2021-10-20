@@ -1,3 +1,4 @@
+from os import replace
 import random
 import torch
 import torch.nn.functional as F
@@ -50,7 +51,7 @@ class DDQL_policy(object):
         self.epsilon = epsilon
 
 
-def ddql_train_step(Q1, Q2, memory, optimizer, batch_size, discount_factor, device):
+def ddql_train_step(Q1_policy, Q2_target, memory, optimizer, batch_size, discount_factor, device):
     # don't learn without some decent experience
     if len(memory) < batch_size:
         return None
@@ -73,9 +74,9 @@ def ddql_train_step(Q1, Q2, memory, optimizer, batch_size, discount_factor, devi
     done = torch.tensor(done, dtype=torch.uint8)[:, None].to(device)  # Boolean
     
     # compute the q value
-    q_val = compute_q_vals(Q1, state, action)
+    q_val = compute_q_vals(Q1_policy, state, action)
     with torch.no_grad():  # Don't compute gradient info for the target (semi-gradient)
-        target = compute_targets(Q2, reward, next_state, done, discount_factor)
+        target = compute_targets(Q2_target, reward, next_state, done, discount_factor)
     
     # loss is measured from error between current and newly expected Q values
     loss = F.smooth_l1_loss(q_val, target)
@@ -89,7 +90,8 @@ def ddql_train_step(Q1, Q2, memory, optimizer, batch_size, discount_factor, devi
         
 def train_ddqn(env_name, num_eps=10000, batch_size=64, hidden_dims=[128], lr=1e-3, 
                 gamma=0.8, eps_start=1.0, eps_end=0.05, eps_decay_iters=1000,
-                zeta=0.05, mem_cap=10000, seed=42, render=False):
+                zeta=0.05, mem_cap=10000, seed=42, replace_target_cnt=1000, 
+                max_episode_length=500, render=False):
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -98,12 +100,14 @@ def train_ddqn(env_name, num_eps=10000, batch_size=64, hidden_dims=[128], lr=1e-
     memory = ReplayMemory(mem_cap)
     set_seed(seed, env)
 
-    Q1 = QNetwork(state_dim, action_dim, hidden_dims).to(device)
-    Q2 = QNetwork(state_dim, action_dim, hidden_dims).to(device)
-    policy = DDQL_policy(Q1, Q2, eps_start, device)
+    Q1_policy = QNetwork(state_dim, action_dim, hidden_dims).to(device)
+    Q1_target = QNetwork(state_dim, action_dim, hidden_dims).to(device)
+    Q2_policy = QNetwork(state_dim, action_dim, hidden_dims).to(device)
+    Q2_target = QNetwork(state_dim, action_dim, hidden_dims).to(device)
+    policy = DDQL_policy(Q1_policy, Q2_policy, eps_start, device)
     
-    optimizer_Q1 = torch.optim.Adam(Q1.parameters(), lr)
-    optimizer_Q2 = torch.optim.Adam(Q2.parameters(), lr)
+    optimizer_Q1 = torch.optim.Adam(Q1_policy.parameters(), lr)
+    optimizer_Q2 = torch.optim.Adam(Q2_policy.parameters(), lr)
     
     global_steps = 0  # Count the steps (do not reset at episode start, to compute epsilon)
     episode_durations = []  #
@@ -111,10 +115,6 @@ def train_ddqn(env_name, num_eps=10000, batch_size=64, hidden_dims=[128], lr=1e-
 
     start_time = time.time()
     for i in range(num_eps):
-        # First initialize the current epsilon value based on global step, and set it in current policy
-        curr_eps = get_epsilon(global_steps, eps_start, eps_end, eps_decay_iters)
-        policy.set_epsilon(curr_eps)
-
         state = env.reset()
         
         steps = 0
@@ -125,11 +125,20 @@ def train_ddqn(env_name, num_eps=10000, batch_size=64, hidden_dims=[128], lr=1e-
             render = False
 
         while True:
+            # First initialize the current epsilon value based on global step, and set it in current policy
+            curr_eps = get_epsilon(global_steps, eps_start, eps_end, eps_decay_iters)
+            policy.set_epsilon(curr_eps)
+
             # Sample action from policy
             action = policy.sample_action(state)
             
             # Get next state and reward
             state_, reward, done, _ = env.step(action)
+
+            # Check if not going over maximum episode length
+            if steps >= (max_episode_length - 1) and 'lunar' not in env_name.lower():
+                reward = -1.0
+                done = True
 
             # Calulcate G for statistics
             G += (gamma**steps) * reward
@@ -139,6 +148,7 @@ def train_ddqn(env_name, num_eps=10000, batch_size=64, hidden_dims=[128], lr=1e-
                 env.render()
                 time.sleep(0.1)
 
+            # For saving last episode gif of LunarLander environment
             if i == (num_eps-1) and 'lunar' in env_name.lower():
                 frame = env.render('rgb_array')
                 frames.append(frame)
@@ -148,9 +158,9 @@ def train_ddqn(env_name, num_eps=10000, batch_size=64, hidden_dims=[128], lr=1e-
             
             # update Q1 or Q2, using the other network
             if random.random() > 0.5:
-                ddql_train_step(Q1, Q2, memory, optimizer_Q1, batch_size, gamma, device)
+                ddql_train_step(Q1_policy, Q2_target, memory, optimizer_Q1, batch_size, gamma, device)
             else:
-                ddql_train_step(Q2, Q1, memory, optimizer_Q2, batch_size, gamma, device)
+                ddql_train_step(Q2_policy, Q1_target, memory, optimizer_Q2, batch_size, gamma, device)
             
             # Increment step counters
             global_steps += 1
@@ -158,6 +168,11 @@ def train_ddqn(env_name, num_eps=10000, batch_size=64, hidden_dims=[128], lr=1e-
             
             # Set current state to next state
             state = state_
+
+            # Replace target net
+            if global_steps % replace_target_cnt == 0:
+                Q1_target.load_state_dict(Q1_policy.state_dict())
+                Q2_target.load_state_dict(Q2_policy.state_dict())
             
             if done:
                 if i % 10 == 0:
@@ -178,6 +193,9 @@ def train_ddqn(env_name, num_eps=10000, batch_size=64, hidden_dims=[128], lr=1e-
 
     print(f'DDQN ran for {end_time-start_time} seconds on {env_name}')
 
+    Q1_policy.save_model('./results/', f'{env_name}_ddqn_s{seed}_Q1model')
+    Q2_policy.save_model('./results/', f'{env_name}_ddqn_s{seed}_Q2model')
+
     return episode_durations, returns
 
-# train_ddqn('LunarLander-v2', render=False, num_eps=10)
+# train_ddqn('Windy', render=False, num_eps=1000)
